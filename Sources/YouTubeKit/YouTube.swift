@@ -65,6 +65,9 @@ public class YouTube {
     private var title: String?
     private var publishDate: String?
     
+    /// Isolated, in-memory session shared by all local extraction requests.
+    let session: URLSession
+
     let useOAuth: Bool
     let allowOAuthCache: Bool
     
@@ -73,7 +76,14 @@ public class YouTube {
     private let log = OSLog(YouTube.self)
     
     /// - parameter methods: Methods used to extract streams from the video - ordered by priority (Default: `local` on iOS, macOS, tvOS, visionOS; `remote` on watchOS)
-    public init(videoID: String, proxies: [String: URL] = [:], useOAuth: Bool = false, allowOAuthCache: Bool = false, methods: [ExtractionMethod] = .default) {
+    /// - parameter cookies: Cookies for local extraction, kept in memory for this instance only.
+    public init(videoID: String, proxies: [String: URL] = [:], useOAuth: Bool = false, allowOAuthCache: Bool = false, methods: [ExtractionMethod] = .default, cookies: [HTTPCookie] = []) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieAcceptPolicy = .always
+        configuration.httpShouldSetCookies = true
+        cookies.forEach { configuration.httpCookieStorage?.setCookie($0) }
+        self.session = URLSession(configuration: configuration)
+
         self.videoID = videoID
         self.useOAuth = useOAuth
         self.allowOAuthCache = allowOAuthCache
@@ -91,11 +101,15 @@ public class YouTube {
     }
     
     /// - parameter methods: Methods used to extract streams from the video - ordered by priority (Default: `local` on iOS, macOS, tvOS, visionOS; `remote` on watchOS)
-    public convenience init(url: URL, proxies: [String: URL] = [:], useOAuth: Bool = false, allowOAuthCache: Bool = false, methods: [ExtractionMethod] = .default) {
+    /// - parameter cookies: Cookies for local extraction, kept in memory for this instance only.
+    public convenience init(url: URL, proxies: [String: URL] = [:], useOAuth: Bool = false, allowOAuthCache: Bool = false, methods: [ExtractionMethod] = .default, cookies: [HTTPCookie] = []) {
         let videoID = Extraction.extractVideoID(from: url.absoluteString) ?? ""
-        self.init(videoID: videoID, proxies: proxies, useOAuth: useOAuth, allowOAuthCache: allowOAuthCache, methods: methods)
+        self.init(videoID: videoID, proxies: proxies, useOAuth: useOAuth, allowOAuthCache: allowOAuthCache, methods: methods, cookies: cookies)
     }
     
+    deinit {
+        session.invalidateAndCancel()
+    }
     
     private var watchHTML: String {
         get async throws {
@@ -105,8 +119,7 @@ public class YouTube {
             var request = URLRequest(url: extendedWatchURL)
             request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
             request.setValue("en-US,en", forHTTPHeaderField: "accept-language")
-            request.httpShouldHandleCookies = false
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, _) = try await session.data(for: request)
             _watchHTML = String(data: data, encoding: .utf8) ?? ""
             return _watchHTML!
         }
@@ -121,8 +134,7 @@ public class YouTube {
             request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
             request.setValue("en-US,en", forHTTPHeaderField: "accept-language")
             request.setValue("https://www.reddit.com/", forHTTPHeaderField: "Referer")
-            request.httpShouldHandleCookies = false
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, _) = try await session.data(for: request)
             _embedHTML = String(data: data, encoding: .utf8) ?? ""
             return _embedHTML!
         }
@@ -191,7 +203,7 @@ public class YouTube {
             let jsURL = try await jsURL
             
             if YouTube.__jsURL != jsURL {
-                let (data, _) = try await URLSession.shared.data(from: jsURL)
+                let (data, _) = try await session.data(from: jsURL)
                 _js = String(data: data, encoding: .utf8) ?? ""
                 YouTube.__js = _js
                 YouTube.__jsURL = jsURL
@@ -364,8 +376,8 @@ public class YouTube {
             
             let innertubeClients: [InnerTube.ClientType] = [.tvSamsung, .visionOS, .web]
             
-            let results: [Result<InnerTube.VideoInfo, Error>] = await innertubeClients.concurrentMap { [videoID, useOAuth, allowOAuthCache] client in
-                let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache)
+            let results: [Result<InnerTube.VideoInfo, Error>] = await innertubeClients.concurrentMap { [videoID, useOAuth, allowOAuthCache, session] client in
+                let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache, session: session)
                 
                 do {
                     let innertubeResponse = try await innertube.player(videoID: videoID)
@@ -414,7 +426,7 @@ public class YouTube {
         } else {
             try await ytcfg
         }
-        let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache)
+        let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache, session: session)
         let videoInfo = try await innertube.player(videoID: videoID)
         
         // ignore if incorrect videoID
@@ -429,7 +441,7 @@ public class YouTube {
     private func bypassAgeGate() async throws {
         let signatureTimestamp = try await signatureTimestamp
         let ytcfg = try await ytcfg
-        let innertube = InnerTube(client: .webCreator, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache)
+        let innertube = InnerTube(client: .webCreator, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache, session: session)
         let innertubeResponse = try await innertube.player(videoID: videoID)
 
         if innertubeResponse.playabilityStatus?.status == "UNPLAYABLE" || innertubeResponse.playabilityStatus?.status == "LOGIN_REQUIRED" {

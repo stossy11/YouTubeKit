@@ -89,6 +89,8 @@ class InnerTube {
     private var accessToken: String?
     private var refreshToken: String?
     
+    private let session: URLSession
+
     private let useOAuth: Bool
     private let allowCache: Bool
     
@@ -103,7 +105,8 @@ class InnerTube {
     
     private let baseURL = "https://www.youtube.com/youtubei/v1"
     
-    init(client: ClientType = .ios, signatureTimestamp: Int?, ytcfg: Extraction.YtCfg, useOAuth: Bool = false, allowCache: Bool = true) {
+    init(client: ClientType = .ios, signatureTimestamp: Int?, ytcfg: Extraction.YtCfg, useOAuth: Bool = false, allowCache: Bool = true, session: URLSession = .shared) {
+        self.session = session
         self.context = defaultClients[client]!.context
         self.apiKey = defaultClients[client]!.apiKey
         self.headers = defaultClients[client]!.headers
@@ -177,7 +180,7 @@ class InnerTube {
         
         // TODO: handle oauth auth case again
         
-        let (responseData, _) = try await URLSession.shared.data(for: request)
+        let (responseData, _) = try await session.data(for: request)
         
         return try JSONDecoder().decode(T.self, from: responseData)
     }
