@@ -51,6 +51,7 @@ public enum SignatureSolverError: Error {
     case contextCreationFailed
     case resourceNotFound(name: String, extension: String)
     case evaluationFailed
+    case javascriptException(message: String)
     case resultConversionFailed
     case encodingFailed
     case jsonDecodingFailed(Error)
@@ -69,6 +70,9 @@ extension SignatureSolverError: LocalizedError {
 
         case .evaluationFailed:
             return NSLocalizedString("JavaScript evaluation failed", comment: "")
+
+        case .javascriptException(let message):
+            return NSLocalizedString("JavaScript evaluation failed: \(message)", comment: "")
 
         case .resultConversionFailed:
             return NSLocalizedString("Failed to convert JavaScript result to string", comment: "")

@@ -26,7 +26,8 @@ class SignatureSolver {
             throw SignatureSolverError.contextCreationFailed
         }
         ctx = context
-        ctx.exceptionHandler = { _, exc in
+        ctx.exceptionHandler = { context, exc in
+            context?.exception = exc
             os_log("JSC error: %{public}@", log: Self.log, type: .error, exc?.toString() ?? "<unknown>")
         }
         
@@ -115,7 +116,12 @@ class SignatureSolver {
         // Call the global `jsc` function defined by yt-ejs
         ctx.setObject(json, forKeyedSubscript: "swiftInput" as NSString)
         let js = "JSON.stringify(jsc(JSON.parse(swiftInput)))"
-        guard let result = ctx.evaluateScript(js) else {
+        ctx.exception = nil
+        let result = ctx.evaluateScript(js)
+        if let exception = ctx.exception {
+            throw SignatureSolverError.javascriptException(message: exception.toString() ?? "Unknown JavaScript exception")
+        }
+        guard let result = result, !result.isUndefined, !result.isNull else {
             throw SignatureSolverError.evaluationFailed
         }
         

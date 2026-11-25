@@ -256,9 +256,14 @@ var jsc = (function (meriyah, astring) {
       }
       throw 'unexpected structure';
     })();
+    const inheritanceHelpers = findInheritanceHelpers(block.body);
     block.body = block.body.filter((node) => {
       if (node.type === 'ExpressionStatement') {
         if (node.expression.type === 'AssignmentExpression') {
+          return true;
+        }
+        if (node.expression.type === 'CallExpression' &&
+            inheritanceHelpers.has(astring.generate(node.expression.callee))) {
           return true;
         }
         return node.expression.type === 'Literal';
@@ -266,6 +271,51 @@ var jsc = (function (meriyah, astring) {
       return true;
     });
     return block.body;
+  }
+  // Minified helper names vary by player. Identify the two-argument function
+  // that restores Sub.prototype.constructor = Sub after setting up inheritance.
+  // Keep only calls to those helpers; unrelated player startup stays stripped.
+  function findInheritanceHelpers(statements) {
+    const helpers = new Set();
+    function propertyName(node) {
+      return node.computed ? node.property.value : node.property.name;
+    }
+    function restoresConstructor(node, subclass) {
+      if (!node || typeof node !== 'object') return false;
+      if (node.type === 'AssignmentExpression' && node.operator === '=' &&
+          node.right.type === 'Identifier' && node.right.name === subclass) {
+        const target = node.left;
+        if (target.type === 'MemberExpression' && propertyName(target) === 'constructor') {
+          const prototype = target.object;
+          if (prototype.type === 'MemberExpression' && propertyName(prototype) === 'prototype' &&
+              prototype.object.type === 'Identifier' && prototype.object.name === subclass) {
+            return true;
+          }
+        }
+      }
+      return Object.values(node).some((child) => {
+        return Array.isArray(child)
+          ? child.some((item) => restoresConstructor(item, subclass))
+          : restoresConstructor(child, subclass);
+      });
+    }
+    function consider(name, fn) {
+      if (!name || !fn || !['FunctionExpression', 'FunctionDeclaration'].includes(fn.type)) return;
+      if (fn.params.length === 2 && fn.params.every((param) => param.type === 'Identifier') &&
+          restoresConstructor(fn.body, fn.params[0].name)) {
+        helpers.add(astring.generate(name));
+      }
+    }
+    for (const node of statements) {
+      if (node.type === 'FunctionDeclaration') {
+        consider(node.id, node);
+      } else if (node.type === 'VariableDeclaration') {
+        for (const declaration of node.declarations) consider(declaration.id, declaration.init);
+      } else if (node.type === 'ExpressionStatement' && node.expression.type === 'AssignmentExpression') {
+        consider(node.expression.left, node.expression.right);
+      }
+    }
+    return helpers;
   }
   function getSolutions(statements) {
     const found = { n: [], sig: [] };
